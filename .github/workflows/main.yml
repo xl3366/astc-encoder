@@ -1,86 +1,154 @@
-build-android-all:
-  name: Android All Architectures
-  runs-on: ubuntu-24.04
-  strategy:
-    matrix:
-      architecture: [arm64-v8a, armeabi-v7a, x86, x86_64]
-  steps:
-    - name: Git checkout
-      uses: actions/checkout@v4
+name: Android Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - '**.cpp'
+      - '**.h'
+      - 'CMakeLists.txt'
+      - '.github/workflows/android.yml'
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-android:
+    name: Build Android (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - name: arm64-v8a
+            abi: arm64-v8a
+            api: 21
+            flags: "-DASTCENC_ISA_NEON=ON -DASTCENC_ISA_NONE=ON"
+          - name: armeabi-v7a
+            abi: armeabi-v7a
+            api: 16
+            flags: "-DASTCENC_ISA_NEON=ON -DASTCENC_ISA_NONE=ON"
+          - name: x86
+            abi: x86
+            api: 16
+            flags: "-DASTCENC_ISA_SSE2=ON -DASTCENC_ISA_SSE41=ON -DASTCENC_ISA_NONE=ON"
+          - name: x86_64
+            abi: x86_64
+            api: 21
+            flags: "-DASTCENC_ISA_SSE2=ON -DASTCENC_ISA_SSE41=ON -DASTCENC_ISA_AVX2=ON -DASTCENC_ISA_NONE=ON"
+    
+    steps:
+    - uses: actions/checkout@v4
       with:
-        submodules: 'true'
+        submodules: recursive
     
     - name: Setup Android NDK
-      uses: android-actions/setup-android@v3
-    
-    - name: Download NDK
       run: |
-        wget -q https://dl.google.com/android/repository/android-ndk-r26b-linux.zip
-        unzip -q android-ndk-r26b-linux.zip
-        echo "ANDROID_NDK_HOME=$PWD/android-ndk-r26b" >> $GITHUB_ENV
-        echo "$PWD/android-ndk-r26b" >> $GITHUB_PATH
+        NDK_VERSION="r26b"
+        echo "Downloading Android NDK $NDK_VERSION..."
+        wget -q https://dl.google.com/android/repository/android-ndk-$NDK_VERSION-linux.zip
+        unzip -q android-ndk-$NDK_VERSION-linux.zip
+        echo "ANDROID_NDK_HOME=$PWD/android-ndk-$NDK_VERSION" >> $GITHUB_ENV
     
-    - name: Setup CMake
-      uses: jwlawson/actions-setup-cmake@v1
-      with:
-        cmake-version: '3.28.3'
-    
-    - name: Configure CMake for Android ${{ matrix.architecture }}
+    - name: Build for ${{ matrix.name }}
       run: |
-        mkdir -p build_android_${{ matrix.architecture }}
-        cd build_android_${{ matrix.architecture }}
+        echo "========================================"
+        echo "Building Android ${{ matrix.name }}"
+        echo "========================================"
         
-        # 设置架构特定的参数
-        case ${{ matrix.architecture }} in
-          "arm64-v8a")
-            ABI="arm64-v8a"
-            API=21
-            ISA_FLAGS="-DASTCENC_ISA_NEON=ON -DASTCENC_ISA_NONE=ON"
-            ;;
-          "armeabi-v7a")
-            ABI="armeabi-v7a"
-            API=16
-            ISA_FLAGS="-DASTCENC_ISA_NEON=ON -DASTCENC_ISA_NONE=ON"
-            ;;
-          "x86")
-            ABI="x86"
-            API=16
-            ISA_FLAGS="-DASTCENC_ISA_SSE2=ON -DASTCENC_ISA_SSE41=ON -DASTCENC_ISA_NONE=ON"
-            ;;
-          "x86_64")
-            ABI="x86_64"
-            API=21
-            ISA_FLAGS="-DASTCENC_ISA_SSE2=ON -DASTCENC_ISA_SSE41=ON -DASTCENC_ISA_AVX2=ON -DASTCENC_ISA_NONE=ON"
-            ;;
-        esac
+        mkdir -p build_${{ matrix.name }}
+        cd build_${{ matrix.name }}
         
         cmake \
-          -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
-          -DANDROID_ABI=$ABI \
-          -DANDROID_PLATFORM=android-$API \
-          -DANDROID_STL=c++_static \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_INSTALL_PREFIX=install \
+          -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+          -DANDROID_ABI="${{ matrix.abi }}" \
+          -DANDROID_PLATFORM="android-${{ matrix.api }}" \
+          -DANDROID_STL="c++_static" \
+          -DCMAKE_BUILD_TYPE="Release" \
+          -DCMAKE_INSTALL_PREFIX="install" \
           -DASTCENC_CLI=ON \
           -DASTCENC_SHAREDLIB=OFF \
-          $ISA_FLAGS \
+          ${{ matrix.flags }} \
           ..
+        
+        make -j$(nproc) install
+        
+        # 验证二进制文件
+        file install/bin/astcenc
+        
+        # 创建压缩包
+        cd install/bin
+        tar -czf ../../../astcenc-android-${{ matrix.name }}.tar.gz astcenc
+        sha256sum ../../../astcenc-android-${{ matrix.name }}.tar.gz > ../../../astcenc-android-${{ matrix.name }}.tar.gz.sha256
     
-    - name: Build Android ${{ matrix.architecture }}
-      run: |
-        cd build_android_${{ matrix.architecture }}
-        make -j4 install
-    
-    - name: Create archive for ${{ matrix.architecture }}
-      run: |
-        cd build_android_${{ matrix.architecture }}/install/bin
-        tar -czf astcenc-android-${{ matrix.architecture }}.tar.gz astcenc
-        sha256sum astcenc-android-${{ matrix.architecture }}.tar.gz > astcenc-android-${{ matrix.architecture }}.tar.gz.sha256
-    
-    - name: Upload Android ${{ matrix.architecture }} binary
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: astcenc-android-${{ matrix.architecture }}
+        name: astcenc-android-${{ matrix.name }}
         path: |
-          build_android_${{ matrix.architecture }}/install/bin/astcenc-android-${{ matrix.architecture }}.tar.gz
-          build_android_${{ matrix.architecture }}/install/bin/astcenc-android-${{ matrix.architecture }}.tar.gz.sha256
+          astcenc-android-${{ matrix.name }}.tar.gz
+          astcenc-android-${{ matrix.name }}.tar.gz.sha256
+    
+    - name: Create combined release
+      if: matrix.name == 'x86_64'
+      run: |
+        echo "Creating combined release..."
+        mkdir -p astcenc-android-all
+        
+        # 收集所有架构的二进制文件
+        for arch in arm64-v8a armeabi-v7a x86 x86_64; do
+          if [ -f "astcenc-android-$arch.tar.gz" ]; then
+            echo "Extracting $arch..."
+            tar -xzf astcenc-android-$arch.tar.gz
+            mv astcenc astcenc-android-all/astcenc-$arch
+          fi
+        done
+        
+        # 创建 README
+        cat > astcenc-android-all/README.md << 'EOF'
+        # ASTC Encoder for Android
+        
+        ## Supported Architectures
+        
+        | Architecture | Description |
+        |--------------|-------------|
+        | arm64-v8a | 64-bit ARM (modern Android devices) |
+        | armeabi-v7a | 32-bit ARM (older Android devices) |
+        | x86 | 32-bit Intel/AMD (emulators) |
+        | x86_64 | 64-bit Intel/AMD (emulators) |
+        
+        ## Usage
+        
+
+bash
+
+# For arm64 devices
+
+./astcenc-arm64-v8a -h
+
+# For armv7 devices
+./astcenc-armeabi-v7a -h
+
+# For x86 emulators
+./astcenc-x86 -h
+
+# For x86_64 emulators
+./astcenc-x86_64 -h
+```
+
+## Building from Source
+
+See: https://github.com/[your-repo]/README.md
+EOF
+
+# 创建压缩包
+tar -czf astcenc-android-all.tar.gz astcenc-android-all/
+sha256sum astcenc-android-all.tar.gz > astcenc-android-all.tar.gz.sha256
+
+- name: Upload combined release
+if: matrix.name == 'x86_64'
+uses: actions/upload-artifact@v4
+with:
+name: astcenc-android-all
+path: |
+  astcenc-android-all.tar.gz
+  astcenc-android-all.tar.gz.sha256
