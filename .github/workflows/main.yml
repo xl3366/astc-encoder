@@ -33,19 +33,14 @@ jobs:
         with:
           submodules: 'true'
 
-      - name: Setup Android NDK
-        id: setup-ndk
-        uses: nndixon/setup-android-ndk@v1
-        with:
-          ndk-version: r26b # 推荐使用较新的 LTS 版本
-
       - name: Build
         run: |
+          # 查找系统内置的 NDK 路径（通常在 /usr/local/lib/android/sdk/ndk-bundle）
+          # GitHub Runner 默认定义了 $ANDROID_NDK_LATEST_HOME
           mkdir build_android
           cd build_android
-          # 使用 NDK 自带的 CMake 工具链文件进行交叉编译
           cmake -G "Unix Makefiles" \
-            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake \
             -DANDROID_ABI=${{ matrix.abi }} \
             -DANDROID_PLATFORM=android-24 \
             -DANDROID_STL=c++_static \
