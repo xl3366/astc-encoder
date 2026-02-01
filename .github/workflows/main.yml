@@ -16,10 +16,10 @@ jobs:
         include:
           - arch: arm64
             abi: arm64-v8a
-            neon: ON
+            neon: ON      # 64位 ARM 支持完整的 NEON 指令
           - arch: arm32
             abi: armeabi-v7a
-            neon: ON
+            neon: OFF     # 修复：32位 ARM 不支持源码中的 A64 NEON 指令，必须关闭
           - arch: x64
             abi: x86_64
             neon: OFF
@@ -37,7 +37,7 @@ jobs:
         run: |
           mkdir build_android
           cd build_android
-          # 使用系统内置的 NDK 最新版本
+          # 使用系统内置的 NDK 环境
           cmake -G "Unix Makefiles" \
             -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake \
             -DANDROID_ABI=${{ matrix.abi }} \
@@ -46,20 +46,19 @@ jobs:
             -DASTCENC_ISA_NEON=${{ matrix.neon }} \
             -DASTCENC_ISA_NONE=ON \
             -DASTCENC_UNITTEST=OFF \
-            -DASTCENC_PACKAGE=android-${{ matrix.arch }} \
             ..
-          # 先构建，确保错误能清晰抛出
           make -j$(nproc)
           
       - name: Package
         run: |
           cd build_android
-          # 创建一个输出目录专门存放要上传的文件
           mkdir -p out
-          # 寻找所有的可执行文件 (astcenc-*) 和库文件
+          # 寻找编译出的二进制文件并复制
+          # astcenc 的产物通常在 Source 目录下
           find Source -maxdepth 1 -type f -executable -name "astcenc-*" -exec cp {} out/ \;
+          # 如果有静态库也一并带上
           find Source -maxdepth 1 -name "*.a" -exec cp {} out/ \;
-          # 打包成 zip (模仿你原有的 release 流程)
+          
           cd out
           zip -r ../astcenc-android-${{ matrix.arch }}.zip ./*
 
